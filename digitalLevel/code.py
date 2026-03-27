@@ -1,96 +1,59 @@
+# import built in libraries
 import time
-import math
 import board
-import digitalio
-import busio
-import adafruit_ssd1306
-import adafruit_adxl34x
-from adafruit_debouncer import Debouncer
+from busio import I2C
 
-sw = digitalio.DigitalInOut(board.D1)
-sw.direction = digitalio.Direction.INPUT
-sw.pull = digitalio.Pull.UP
-button = Debouncer(sw)
+# import modules
+from utils.hardware import makeButton, makeOled, makeADXL
+from utils.display import updateDisplay, updateColors
+from utils.calculations import calcAngle, calibrate
 
-calSW = digitalio.DigitalInOut(board.D3)
-calSW.direction = digitalio.Direction.INPUT
-calSW.pull = digitalio.Pull.UP
-calButton = Debouncer(calSW)
+# init the buttons
+sleepBtn = makeButton(board.D1)
+calBtn = makeButton(board.D3)
 
-i2c = busio.I2C(scl=board.D5, sda=board.D4)
-oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
-accel = adafruit_adxl34x.ADXL343(i2c)
+# init i2c connection and oled/adxl
+i2c = I2C(scl=board.D5, sda=board.D4)
+oled = makeOled(i2c)
+adxl = makeADXL(i2c)
 
+# init global variables
 globalAngle = 0
 colorFill = 0
 color = 1
-
-def centerWord1(ct):
-    half = 128/2
-    halfW = (len(ct)*6)/2
-    return half - halfW
-def centerWord2(ct):
-    half = 128/2
-    halfW = (len(ct)*12)/2
-    return half-halfW
-
-def updateDisplay(x, y, z, a, color, colorFill):
-        
-    oled.fill(colorFill)
-    oled.text(f"X: {x}", int(centerWord1(f"X: {x}")), 0, color)
-    oled.text(f"Y: {y}", int(centerWord1(f"Y: {y}")), 8, color)
-    oled.text(f"Z: {z}", int(centerWord1(f"Z: {z}")), 16, color)
-    oled.text(f"Angle:{a}", int(centerWord2(f"Angle:{a}")), 40, color, size=2)
-    oled.show()
-
-def calcAngle(x, y, z):
-    global globalAngle
-    angle = int(math.degrees(math.atan2(x, y)) - globalAngle)
-    return angle
-
-def calibrate(x, y):
-    global globalAngle
-    globalAngle = int(math.degrees(math.atan2(x, y)))
-    oled.fill(1)
-    oled.text("Now calibrating..", int(centerWord1("Now calibrating..")), 32, 0)
-    oled.show()
-    time.sleep(1.5)
-    oled.fill(0)
-    oled.show()
-    
-def updateColors(c, cf):
-    global color
-    global colorFill
-    color = c
-    colorFill = cf
-
 powerVal = False
 
 while True:
-    
-    button.update()
-    calButton.update()
-    
-    if button.fell:
+
+    # check for button update every cycle
+    sleepBtn.update()
+    calBtn.update()
+
+    # flip powerVal if sleepBtn is pressed
+    if sleepBtn.fell:
         powerVal = not powerVal
         if not powerVal:
+            # blank screen if sleeping
             oled.fill(0)
             oled.show()
-    if calButton.fell:
-            calibrate(x, y)
+
+    if calBtn.fell:
+        # capture global angle from calibration
+        globalAngle = calibrate(x, y, globalAngle, oled)
     if powerVal:
-    
-        x, y, z = accel.acceleration
-        
-        
-        
-        angl = calcAngle(x, y, z)
+
+        # get gravity acc from x, y, and z axis
+        x, y, z = adxl.acceleration
+
+        # get angle from live reading minus global for calibrated reading
+        angl = calcAngle(x, y, globalAngle)
+
         if angl == 0:
-            updateColors(0, 1)
+            # inverse display color if perfect level
+            color, colorFill = updateColors(0, 1)
         else:
-            updateColors(1, 0)
-        updateDisplay(x, y, z, abs(angl), color, colorFill)
-    
+            color, colorFill = updateColors(1, 0)
+        # update oled screen every cycle
+        updateDisplay(oled, x, y, z, abs(angl), color, colorFill)
+
     time.sleep(0.05)
-        
-    
